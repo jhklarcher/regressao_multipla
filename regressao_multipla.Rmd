@@ -1,0 +1,274 @@
+---
+title: 'Regressão Múltipla no Dataset Longley'
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+Base teórica:
+
+https://jhklarcher.github.io/material/01_regressao_multipla.html
+
+## Avaliação Inicial
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r} 
+# Bibliotecas
+library(ggplot2)
+library(ggcorrplot)
+library(plotly)
+theme_set(theme_light())
+```
+
+Importando os dados.
+
+```{r}
+data(longley)
+```
+
+Verificando as relações entre as variáveis.
+
+```{r}
+pairs(longley, pch = 19)
+```
+
+Calculando a matriz de correlação.
+
+```{r}
+cor(longley[1:6])
+ggcorrplot(cor(longley[1:6]))
+```
+
+## Modelo de Regressão
+
+Regressão com a função lm do R.
+
+```{r}
+modelo1 <- lm(Employed ~ GNP.deflator + GNP + Unemployed + Armed.Forces + Population + Year, data=longley)
+summary(modelo1)
+```
+
+Criando o modelo de regressão próprio.
+
+```{r}
+X <- data.matrix(longley[1:6])
+X <- cbind(rep(1,nrow(X)),X)
+y <- data.matrix(longley[7])
+beta <- solve(t(X) %*% X) %*% t(X) %*% y
+resid <- (y - X %*% beta)
+```
+
+## Normalidade, Homocedasticidade
+
+```{r}
+par(mfrow=c(2,2))
+plot(modelo1)
+```
+
+
+### Histograma dos resíduos
+
+```{r}
+hist(resid, breaks=6, prob = TRUE)
+lines(seq(-1, 1, length=100), dnorm(seq(-1, 1, length=100), mean(resid), sd(resid)))
+```
+
+### Teste de Shapiro-Wilk para normalidade
+
+```{r}
+shapiro.test(resid)
+```
+
+p-valor = 0.4679.
+A hipótese de a distribuição ser nomal é aceita.
+
+### Teste KS para normalidade
+
+```{r}
+ks.test(resid, "pnorm", mean(resid), sd(resid))
+```
+
+p-valor = 0.6672.
+A hipótese de a distribuição ser nomal é aceita.
+
+## Teste para a colinearidade (Variance inflation factor)
+
+```{r}
+library(car)
+vif(modelo1)
+```
+
+## ANOVA
+
+```{r}
+k <- ncol(X)-1
+p <- k + 1
+n <- nrow(X)
+
+SS_R <-  t(beta) %*% t(X) %*% y - (sum(y)^2)/n
+SS_E <- (t(resid) %*% resid)
+SS_T <- t(y) %*% y - (sum(y)^2)/n
+
+MS_R <- SS_R/k
+MS_E <- SS_E/(n-p)
+
+F_0 <- MS_R/MS_E
+F_CR <- qf(.95, df1=k, df2=(n-p))
+p_val <- pf(F_0, df1=k, df2=(n-p), lower.tail=F)
+```
+
+$H_0: \beta_0 = \beta_1 = ... = \beta_k = 0$.
+
+$H_1:\beta_j\neq0$, para pelomenos um j.
+
+Como $F_0 > F_{CR}$ a hipótese nula é rejeitada.
+
+## R² e R² ajustado
+```{r}
+R2 <- SS_R/SS_T
+R2_ajust <- 1 - (SS_E * (n-1))/(SS_T * (n-p))
+```
+
+## Teste para os coeficientes individualmente
+```{r}
+sigma_chapeu <- SS_E/(n-p)
+C <- solve(t(X) %*% X)
+
+T_CR <- qt(.025, df=(n-p),  lower.tail = F)
+T_0 <- vector()
+p_val_t <- vector()
+SE <- vector()
+
+for(i in 1:7) {
+  T_0[i] <- abs(beta[i]/(sqrt(sigma_chapeu*C[i,i])))
+  p_val_t[i] <- pt(T_0[i], df=(n-p), lower.tail=F)*2
+  SE[i] <- sqrt(sigma_chapeu*C[i,i])
+}
+```
+
+## Residual standard error
+```{r}
+RSE <- sqrt(MS_E)
+```
+
+
+## Função de Sumário
+```{r}
+sumario <- function(X, y) {
+  # Cálculo de beta e dos resíduos
+  beta <- solve(t(X) %*% X) %*% t(X) %*% y
+  resid <- (y - X %*% beta)
+  
+  #Cálculo dos graus de liberdade e ANOVA
+  k <- ncol(X)-1
+  p <- k + 1
+  n <- nrow(X)
+  SS_R <-  t(beta) %*% t(X) %*% y - (sum(y)^2)/n
+  SS_E <- (t(resid) %*% resid)
+  SS_T <- t(y) %*% y - (sum(y)^2)/n
+  MS_R <- SS_R/k
+  MS_E <- SS_E/(n-p)
+  F_0 <- MS_R/MS_E # Estatística F
+  #F_CR <- qf(.95, df1=k, df2=(n-p))
+  p_val <- pf(F_0, df1=k, df2=(n-p), lower.tail=F) # P-valor da anova
+  R2 <- SS_R/SS_T
+  R2_ajust <- 1 - (SS_E * (n-1))/(SS_T * (n-p))
+  sigma_chapeu <- SS_E/(n-p)
+  C <- solve(t(X) %*% X)
+  
+  T_0 <- vector() # Estatística T dos coef.
+  p_val_t <- vector() # P-val dos testes t dos coef
+  SE <- vector() # Erro quadrático dos coef
+
+  for(i in 1:ncol(X)) {
+    T_0[i] <- abs(beta[i]/(sqrt(sigma_chapeu*C[i,i])))
+    p_val_t[i] <- pt(T_0[i], df=(n-p), lower.tail=F)*2
+    SE[i] <- sqrt(sigma_chapeu*C[i,i])
+  }
+  
+  RSE <- sqrt(MS_E) # Erro resídual padrão
+  
+  # cria os data-frames que serão impressos pela função
+  rownames(beta)[1] <- "Intercessão"
+  coeficientes <- as.data.frame(rownames(beta))
+  coeficientes <- cbind(coeficientes,beta, SE, T_0, p_val_t)
+  colnames(coeficientes) <-c("Variável", "Valor", "Err. Padr.", "t", "p-val")
+  
+  # Imprime o sumário
+  cat("\nResíduos:\n")
+  prmatrix(t(quantile(resid)), rowlab=rep("", nrow(t(quantile(resid)))))
+  cat("\n")
+  prmatrix(coeficientes, rowlab=rep("", nrow(coeficientes)), quote = F)
+  
+  cat("\nErro padrão residual:", RSE, "com", (n-p), "graus de liberdade.")
+  cat("\nR-quadrado:", R2, "e R-quadrado ajustado", R2_ajust, ".")
+  cat("\nEstatística-F:", F_0[1,1], "com", (n-p), "e",(k), "GL, p-val:", p_val, ".\n")
+}
+```
+
+
+## Adequação do modelo com base nos Resultados
+```{r}
+modelo2 <- lm(Employed ~ Unemployed + Armed.Forces + Year, data=longley)
+summary(modelo2)
+```
+
+```{r}
+X2 <- data.matrix(cbind(longley[3:4], longley[6]))
+X2 <- cbind(rep(1,nrow(X2)),X2)
+y2 <- data.matrix(longley[7])
+beta2 <- solve(t(X2) %*% X2) %*% t(X2) %*% y2
+resid2 <- (y2 - X2 %*% beta2)
+sumario(X2, y2)
+```
+
+## Distância de Cook
+
+```{r}
+k <- ncol(X2)-1
+p <- k + 1
+n <- nrow(X2)
+SS_E <- (t(resid) %*% resid)
+sigma_chapeu <- SS_E/(n-p)
+
+H <- X2 %*% solve(t(X2) %*% X2) %*% t(X2)
+r <- vector()
+D <- vector()
+for(i in 1:nrow(X2)) {
+    r[i] <- resid2[i]/sqrt(sigma_chapeu^2*(1-H[i,i]))
+    D[i] <- r[i]^2 * H[i,i]/(p*(1-H[i,i]))
+}
+
+p <- ggplot() +
+  geom_point(aes(longley$Year, D, color=(D<1)), size=2) +
+  scale_color_manual(values=c("Red", "darkgreen"))
+ggplotly(p)
+```
+
+Valores acima de 1 são considerados pontos influêntes.
+
+
+## Gerando previsões
+
+$$ \boldsymbol{\hat{y}} = \boldsymbol{X\hat{\beta}} $$
+Visualizando as previsões com relação à variável ano:
+```{r}
+y_hat <- X2 %*% beta2
+y_hat <- cbind(as.data.frame(y_hat), longley$Year, longley$Employed)
+colnames(y_hat) <-c("y_hat", "Year", "y")
+
+p <- ggplot() +
+  geom_line(data=y_hat, aes(Year, y, group="Valor", col="Valor"), size=1) +
+  geom_point(data=y_hat, aes(Year, y_hat, group="Previsão", col="Previsão"), size=1.5) +
+  ylab("Employed") +
+  xlab("Year") +
+  theme(legend.title=element_blank()) +
+  scale_color_manual(values=c("Black", "Red"))
+
+ggplotly(p)
+```
+
